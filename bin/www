@@ -1,0 +1,147 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../src/app');
+var debug = require('debug')('sequelize-migrations');
+var http = require('http');
+var models = require('../src/models');
+var path = require('path');
+var Umzug = require('umzug');
+
+/**
+ * Initialize umzug.
+ */
+
+var umzug = new Umzug({
+  storage: 'sequelize',
+  storageOptions: {
+    sequelize: models.sequelize,
+  },
+  // https://github.com/sequelize/umzug/issues/17
+  migrations: {
+    params: [
+      models.sequelize.getQueryInterface(), // queryInterface
+      models.sequelize.constructor, // DataTypes
+      function() {
+        throw new Error('Migration tried to use old style "done" callback. Please upgrade to "umzug" and return a promise instead.');
+      }
+    ],
+    path: path.join(__dirname, '../src/migrations'),
+    pattern: /\.js$/
+  },
+  logging: function() {
+    console.log.apply(null, arguments);
+  }
+});
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app);
+
+/**
+ * Check for pending migrations.
+ */
+
+umzug.pending().then((migrations) => {
+  var migrate = new Promise((resolve) => {
+    /**
+     * Resolve any migrations that are pending.
+     */
+    if (migrations.length > 0) {
+      console.log(`Executing ${migrations.length} migration${migrations.length > 1 ? 's' : ''}`);
+      migrationsFiles = migrations.map(function (migration) {
+          return migration.file.replace(/\.js$/, '');
+      });
+      umzug.execute({
+        migrations: migrationsFiles,
+        method: 'up'
+      }).then((migrations) => {
+        console.log('Migrations successful');
+        resolve();
+      });
+    } else {
+      resolve();
+    }
+  }).then(() => {
+    /**
+     * Listen on provided port, on all network interfaces.
+     */
+    server.listen(port, function() {
+      debug('Express server listening on port ' + server.address().port);
+    });
+    server.on('error', onError);
+    server.on('listening', onListening);
+  });
+});
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+}
